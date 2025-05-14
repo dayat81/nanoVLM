@@ -1,3 +1,6 @@
+
+*.pkl
+*.pem
 # Python-generated files
 __pycache__/
 .pytest_cache/

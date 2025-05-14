@@ -34,6 +34,9 @@ def extract_embedding(image_pil):
             emb = emb.cpu()
         return emb.flatten().numpy()
 
+def l2_normalize(x):
+    return x / np.linalg.norm(x)
+
 def load_db():
     try:
         with open(DB_PATH, "rb") as f:
@@ -50,10 +53,6 @@ def classify_person():
     file = request.files['image']
     name = request.form.get('name', None)
     image = Image.open(file.stream).convert('RGB')
-    emb = extract_embedding(image)
-    db = load_db()
-
-    # Use OpenCV face detection to center crop on the head
     img_np = np.array(image)
     h, w, _ = img_np.shape
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
@@ -64,7 +63,6 @@ def classify_person():
         cx = x + fw // 2
         cy = y + fh // 2
     else:
-        # Fallback to image center
         cx, cy = w // 2, h // 2
     crop_size = 224
     x1 = max(0, cx - crop_size // 2)
@@ -82,21 +80,52 @@ def classify_person():
     buf.seek(0)
     cropped_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
 
+    emb = l2_normalize(extract_embedding(crop_pil))
+    db = load_db()
+
     if name:
         db.append((emb, name))
         save_db(db)
-        return jsonify({"status": "added", "name": name, "cropped_image": cropped_b64})
+        return jsonify({"status": "added", "name": name, "cropped_image": cropped_b64, "similarity": None})
     else:
         if not db:
-            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64})
+            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64, "similarity": None})
         embs, names = zip(*db)
-        embs = np.stack(embs)
+        embs = np.stack([l2_normalize(e) for e in embs])
         dists = np.linalg.norm(embs - emb, axis=1)
         idx = np.argmin(dists)
         if dists[idx] < 0.8:
-            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64})
+            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx])})
         else:
-            return jsonify({"status": "unknown", "cropped_image": cropped_b64})
+            return jsonify({"status": "unknown", "cropped_image": cropped_b64, "similarity": float(dists[idx])})
+
+@app.route('/detect_face', methods=['POST'])
+def detect_face():
+    try:
+        file = request.files['image']
+        image = Image.open(file.stream).convert('RGB')
+        img_np = np.array(image)
+        h, w, _ = img_np.shape
+        try:
+            import mediapipe as mp
+        except ImportError:
+            return jsonify({'found': False, 'error': 'mediapipe not installed'}), 500
+        mp_face = mp.solutions.face_detection
+        with mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
+            results = face_detection.process(img_np)
+            if results.detections:
+                detection = max(results.detections, key=lambda d: d.score[0])
+                bbox = detection.location_data.relative_bounding_box
+                x = int(bbox.xmin * w)
+                y = int(bbox.ymin * h)
+                bw = int(bbox.width * w)
+                bh = int(bbox.height * h)
+                return jsonify({'found': True, 'x': x, 'y': y, 'w': bw, 'h': bh})
+            else:
+                return jsonify({'found': False})
+    except Exception as e:
+        print("Error in /detect_face:", e)
+        return jsonify({'found': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Make sure cert.pem and key.pem exist in the same directory

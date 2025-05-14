@@ -37,20 +37,42 @@
     }
     startWebcam();
 
-    // Draw crop rectangle overlay
-    function drawOverlay() {
+    // Real-time face tracking using backend OpenCV
+    async function detectFaceAndDraw() {
+      const video = document.getElementById('webcam');
       const overlay = document.getElementById('overlay');
       const ctx = overlay.getContext('2d');
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-      // Draw 224x224 rectangle in the center
-      const cropSize = 224;
-      const x = (overlay.width - cropSize) / 2;
-      const y = (overlay.height - cropSize) / 2;
-      ctx.strokeStyle = 'red';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, cropSize, cropSize);
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        // Draw current frame to hidden canvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 640;
+        tempCanvas.height = 480;
+        tempCanvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+        tempCanvas.toBlob(async function(blob) {
+          const formData = new FormData();
+          formData.append('image', blob, 'frame.png');
+          try {
+            const response = await fetch('/detect_face', {
+              method: 'POST',
+              body: formData
+            });
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            if (response.ok) {
+              const result = await response.json();
+              if (result.found) {
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(result.x, result.y, result.w, result.h);
+              }
+            }
+          } catch (e) {
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+          }
+        }, 'image/png');
+      }
+      setTimeout(detectFaceAndDraw, 300);
     }
-    setInterval(drawOverlay, 100);
+    detectFaceAndDraw();
 
     document.getElementById('capture-python').onclick = async function() {
       const video = document.getElementById('webcam');
@@ -68,7 +90,17 @@
         });
         if (response.ok) {
           const result = await response.json();
-          document.getElementById('result').textContent = result.status === 'recognized' ? `Recognized: ${result.name}` : (result.status === 'added' ? `Added: ${result.name}` : 'Unknown person');
+          if (result.status === 'recognized') {
+            document.getElementById('result').textContent = `Recognized: ${result.name} (Similarity: ${result.similarity !== null ? result.similarity.toFixed(3) : 'N/A'})`;
+          } else if (result.status === 'added') {
+            document.getElementById('result').textContent = `Added: ${result.name} (Similarity: ${result.similarity !== null ? result.similarity.toFixed(3) : 'N/A'})`;
+          } else if (result.status === 'best_guess') {
+            document.getElementById('result').textContent = `Best guess: ${result.name} (Similarity: ${result.similarity !== null ? result.similarity.toFixed(3) : 'N/A'})`;
+          } else if (result.status === 'no_match') {
+            document.getElementById('result').textContent = `No match. Similarity: ${result.similarity !== null ? result.similarity.toFixed(3) : 'N/A'}`;
+          } else if (result.status === 'unknown') {
+            document.getElementById('result').textContent = `Unknown person. Similarity: ${result.similarity !== null ? result.similarity.toFixed(3) : 'N/A'}`;
+          }
           if (result.cropped_image) {
             document.getElementById('cropped').src = result.cropped_image;
           }
