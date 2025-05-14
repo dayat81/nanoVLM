@@ -1,5 +1,15 @@
-from flask import Flask, send_from_directory, request, send_file, jsonify
+import sys
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow/MediaPipe INFO and WARNING
+class DevNull:
+    def write(self, msg):
+        pass
+    def flush(self):
+        pass
+sys.stderr = DevNull()
+import warnings
+warnings.filterwarnings("ignore")
+from flask import Flask, send_from_directory, request, send_file, jsonify
 import io
 from PIL import Image
 import numpy as np
@@ -8,7 +18,7 @@ import torch
 import pickle
 import base64
 from models.vision_language_model import VisionLanguageModel
-from data.processors import get_image_processor
+from data.processors import get_image_processor, get_tokenizer
 
 app = Flask(__name__)
 
@@ -83,21 +93,34 @@ def classify_person():
     emb = l2_normalize(extract_embedding(crop_pil))
     db = load_db()
 
+    # Always generate description for the original image
+    def generate_description(image_pil):
+        tokenizer = get_tokenizer(model.cfg.lm_tokenizer)
+        text = "Describe this image."
+        template = f"Question: {text} Answer:"
+        encoded_batch = tokenizer.batch_encode_plus([template], return_tensors="pt")
+        tokens = encoded_batch['input_ids']
+        image_tensor = image_processor(image_pil).unsqueeze(0)
+        with torch.no_grad():
+            gen = model.generate(tokens, image_tensor, max_new_tokens=80)
+            return tokenizer.batch_decode(gen, skip_special_tokens=True)[0]
+    description = generate_description(image)
+
     if name:
         db.append((emb, name))
         save_db(db)
-        return jsonify({"status": "added", "name": name, "cropped_image": cropped_b64, "similarity": None})
+        return jsonify({"status": "added", "name": name, "cropped_image": cropped_b64, "similarity": None, "description": description})
     else:
         if not db:
-            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64, "similarity": None})
+            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64, "similarity": None, "description": description})
         embs, names = zip(*db)
         embs = np.stack([l2_normalize(e) for e in embs])
         dists = np.linalg.norm(embs - emb, axis=1)
         idx = np.argmin(dists)
         if dists[idx] < 1.0:
-            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx])})
+            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx]), "description": description})
         else:
-            return jsonify({"status": "unknown", "cropped_image": cropped_b64, "similarity": float(dists[idx])})
+            return jsonify({"status": "best_guess", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx]), "description": description})
 
 @app.route('/detect_face', methods=['POST'])
 def detect_face():
@@ -126,6 +149,21 @@ def detect_face():
     except Exception as e:
         print("Error in /detect_face:", e)
         return jsonify({'found': False, 'error': str(e)}), 500
+
+@app.route('/describe_image', methods=['POST'])
+def describe_image():
+    file = request.files['image']
+    prompt = request.form.get('prompt', 'what is the person doing?')
+    image = Image.open(file.stream).convert('RGB')
+    tokenizer = get_tokenizer(model.cfg.lm_tokenizer)
+    template = f"Question: {prompt} Answer:"
+    encoded_batch = tokenizer.batch_encode_plus([template], return_tensors="pt")
+    tokens = encoded_batch['input_ids']
+    image_tensor = image_processor(image).unsqueeze(0)
+    with torch.no_grad():
+        gen = model.generate(tokens, image_tensor, max_new_tokens=30)
+        description = tokenizer.batch_decode(gen, skip_special_tokens=True)[0]
+    return jsonify({"description": description})
 
 if __name__ == '__main__':
     # Make sure cert.pem and key.pem exist in the same directory

@@ -23,6 +23,8 @@
   <div style="margin: 10px;">
     <label><input type="radio" name="mode" value="train" checked> Train Mode</label>
     <label><input type="radio" name="mode" value="inference"> Inference Mode</label>
+  </div>
+  <div style="margin: 10px;">
     <label for="method">Similarity Method:</label>
     <select id="method">
       <option value="euclidean">Euclidean</option>
@@ -35,6 +37,8 @@
   <h2>Cropped Person (Python):</h2>
   <img id="cropped" width="224" height="224" />
   <div id="result"></div>
+  <label for="description">Description:</label>
+  <textarea id="description" rows="3" cols="60" readonly style="margin-top:10px;"></textarea>
   <script>
     async function startWebcam() {
       try {
@@ -136,6 +140,11 @@
           }
           if (result.cropped_image) {
             document.getElementById('cropped').src = result.cropped_image;
+          }
+          if (result.description) {
+            document.getElementById('description').value = result.description;
+          } else {
+            document.getElementById('description').value = '';
           }
         } else {
           document.getElementById('result').textContent = 'Error in classification!';

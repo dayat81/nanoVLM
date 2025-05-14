@@ -18,7 +18,7 @@ class VLMConfig:
     lm_inter_dim: int = 1536
     lm_rms_eps: float = 1e-5
     lm_re_base: int = 100000
-    lm_max_position_embeddings: int = 8192
+    lm_max_position_embeddings: int = 2048
     lm_vocab_size: int = 49152
     lm_n_heads: int = 9
     lm_n_kv_heads: int = 3
