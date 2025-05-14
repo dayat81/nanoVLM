@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Webcam Access Demo</title>
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; margin-top: 50px; }
+    video { border: 2px solid #333; border-radius: 8px; position: absolute; left: 0; top: 0; }
+    #video-container { position: relative; width: 640px; height: 480px; }
+    #overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+    #capture-python { margin: 20px; padding: 10px 20px; font-size: 16px; position: static; }
+    #cropped { margin-top: 20px; border: 2px solid #333; border-radius: 8px; }
+    #name { margin-top: 20px; font-size: 16px; padding: 5px; }
+    #result { margin-top: 20px; font-size: 18px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Webcam Access Demo</h1>
+  <div id="video-container">
+    <video id="webcam" autoplay playsinline width="640" height="480"></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+  </div>
+  <input id="name" type="text" placeholder="Enter name (optional)" />
+  <button id="capture-python">Capture & Classify Person (nanoVLM)</button>
+  <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+  <h2>Cropped Person (Python):</h2>
+  <img id="cropped" width="224" height="224" />
+  <div id="result"></div>
+  <script>
+    async function startWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        document.getElementById('webcam').srcObject = stream;
+      } catch (err) {
+        alert('Error accessing webcam: ' + err);
+      }
+    }
+    startWebcam();
+
+    // Draw crop rectangle overlay
+    function drawOverlay() {
+      const overlay = document.getElementById('overlay');
+      const ctx = overlay.getContext('2d');
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      // Draw 224x224 rectangle in the center
+      const cropSize = 224;
+      const x = (overlay.width - cropSize) / 2;
+      const y = (overlay.height - cropSize) / 2;
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x, y, cropSize, cropSize);
+    }
+    setInterval(drawOverlay, 100);
+
+    document.getElementById('capture-python').onclick = async function() {
+      const video = document.getElementById('webcam');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const name = document.getElementById('name').value;
+      canvas.toBlob(async function(blob) {
+        const formData = new FormData();
+        formData.append('image', blob, 'capture.png');
+        if (name) formData.append('name', name);
+        const response = await fetch('/classify_person', {
+          method: 'POST',
+          body: formData
+        });
+        if (response.ok) {
+          const result = await response.json();
+          document.getElementById('result').textContent = result.status === 'recognized' ? `Recognized: ${result.name}` : (result.status === 'added' ? `Added: ${result.name}` : 'Unknown person');
+          if (result.cropped_image) {
+            document.getElementById('cropped').src = result.cropped_image;
+          }
+        } else {
+          document.getElementById('result').textContent = 'Error in classification!';
+        }
+      }, 'image/png');
+    };
+  </script>
+</body>
+</html> 
