@@ -94,7 +94,7 @@ def classify_person():
         embs = np.stack([l2_normalize(e) for e in embs])
         dists = np.linalg.norm(embs - emb, axis=1)
         idx = np.argmin(dists)
-        if dists[idx] < 0.8:
+        if dists[idx] < 1.0:
             return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx])})
         else:
             return jsonify({"status": "unknown", "cropped_image": cropped_b64, "similarity": float(dists[idx])})

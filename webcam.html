@@ -20,8 +20,17 @@
     <video id="webcam" autoplay playsinline width="640" height="480"></video>
     <canvas id="overlay" width="640" height="480"></canvas>
   </div>
-  <input id="name" type="text" placeholder="Enter name (optional)" />
-  <button id="capture-python">Capture & Classify Person (nanoVLM)</button>
+  <div style="margin: 10px;">
+    <label><input type="radio" name="mode" value="train" checked> Train Mode</label>
+    <label><input type="radio" name="mode" value="inference"> Inference Mode</label>
+    <label for="method">Similarity Method:</label>
+    <select id="method">
+      <option value="euclidean">Euclidean</option>
+      <option value="faiss">FAISS</option>
+    </select>
+  </div>
+  <input id="name" type="text" placeholder="Enter name (required in Train Mode)" />
+  <button id="capture-python">Add to Database</button>
   <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
   <h2>Cropped Person (Python):</h2>
   <img id="cropped" width="224" height="224" />
@@ -74,16 +83,40 @@
     }
     detectFaceAndDraw();
 
+    // Mode toggle logic
+    const modeRadios = document.getElementsByName('mode');
+    const nameInput = document.getElementById('name');
+    const captureBtn = document.getElementById('capture-python');
+    function updateMode() {
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+      if (mode === 'train') {
+        nameInput.style.display = '';
+        captureBtn.textContent = 'Add to Database';
+      } else {
+        nameInput.style.display = 'none';
+        captureBtn.textContent = 'Recognize';
+      }
+    }
+    modeRadios.forEach(r => r.addEventListener('change', updateMode));
+    updateMode();
+
     document.getElementById('capture-python').onclick = async function() {
       const video = document.getElementById('webcam');
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const name = document.getElementById('name').value;
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+      const name = nameInput.value;
+      const method = document.getElementById('method').value;
+      if (mode === 'train' && !name) {
+        alert('Please enter a name in Train Mode!');
+        return;
+      }
       canvas.toBlob(async function(blob) {
         const formData = new FormData();
         formData.append('image', blob, 'capture.png');
-        if (name) formData.append('name', name);
+        if (mode === 'train') formData.append('name', name);
+        formData.append('method', method);
         const response = await fetch('/classify_person', {
           method: 'POST',
           body: formData
