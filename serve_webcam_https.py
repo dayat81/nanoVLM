@@ -90,37 +90,52 @@ def classify_person():
     buf.seek(0)
     cropped_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
 
+    # Encode full image
+    buf = io.BytesIO()
+    image.save(buf, format='PNG')
+    buf.seek(0)
+    full_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
+
     emb = l2_normalize(extract_embedding(crop_pil))
     db = load_db()
 
     # Always generate description for the original image
     def generate_description(image_pil):
         tokenizer = get_tokenizer(model.cfg.lm_tokenizer)
-        text = "Describe this image."
+        text = "Describe this image in as much detail as possible. Do not stop until you have described everything."
         template = f"Question: {text} Answer:"
         encoded_batch = tokenizer.batch_encode_plus([template], return_tensors="pt")
         tokens = encoded_batch['input_ids']
         image_tensor = image_processor(image_pil).unsqueeze(0)
         with torch.no_grad():
-            gen = model.generate(tokens, image_tensor, max_new_tokens=80)
+            gen = model.generate(tokens, image_tensor, max_new_tokens=256)
+            desc_raw = tokenizer.batch_decode(gen, skip_special_tokens=False)[0]
+            print("Raw output:", desc_raw)
             return tokenizer.batch_decode(gen, skip_special_tokens=True)[0]
     description = generate_description(image)
 
     if name:
         db.append((emb, name))
         save_db(db)
-        return jsonify({"status": "added", "name": name, "cropped_image": cropped_b64, "similarity": None, "description": description})
+        return jsonify({
+            "status": "added", 
+            "name": name, 
+            "cropped_image": cropped_b64,
+            "full_image": full_b64,
+            "similarity": None, 
+            "description": description
+        })
     else:
         if not db:
-            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64, "similarity": None, "description": description})
+            return jsonify({"status": "unknown", "reason": "DB empty", "cropped_image": cropped_b64, "full_image": full_b64, "similarity": None, "description": description})
         embs, names = zip(*db)
         embs = np.stack([l2_normalize(e) for e in embs])
         dists = np.linalg.norm(embs - emb, axis=1)
         idx = np.argmin(dists)
         if dists[idx] < 1.0:
-            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx]), "description": description})
+            return jsonify({"status": "recognized", "name": names[idx], "cropped_image": cropped_b64, "full_image": full_b64, "similarity": float(dists[idx]), "description": description})
         else:
-            return jsonify({"status": "best_guess", "name": names[idx], "cropped_image": cropped_b64, "similarity": float(dists[idx]), "description": description})
+            return jsonify({"status": "best_guess", "name": names[idx], "cropped_image": cropped_b64, "full_image": full_b64, "similarity": float(dists[idx]), "description": description})
 
 @app.route('/detect_face', methods=['POST'])
 def detect_face():
